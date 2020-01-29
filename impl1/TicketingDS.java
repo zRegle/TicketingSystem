@@ -1,4 +1,8 @@
-package ticketingsystem;
+package ticketingsystem.impl1;
+
+import ticketingsystem.Singleton;
+import ticketingsystem.Ticket;
+import ticketingsystem.TicketingSystem;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -9,7 +13,7 @@ public class TicketingDS implements TicketingSystem {
     private static AtomicLong tidGenerator = new AtomicLong(1);
     private static ConcurrentHashMap<Long, Boolean> tickets = new ConcurrentHashMap<>();
 
-    TicketingDS(int routenum, int coachnum, int seatnum, int stationnum, int threadnum) {
+    public TicketingDS(int routenum, int coachnum, int seatnum, int stationnum, int threadnum) {
         routes = new Route[routenum + 1];
         for (int i = 1; i <= routenum; i++) {
             routes[i] = new Route(1, stationnum, i, coachnum, seatnum);
@@ -29,7 +33,7 @@ public class TicketingDS implements TicketingSystem {
                 //所以这里要先判断一下是否在当前map里, 如果不在就不要浪费时间去循环了
                 continue;
             /* 从各个区间跟目标区间有交集的区间的map中占领该座位
-             * 比如想占领3->6的1号座位, 一共有8个站
+             * 比如想一共有8个站, 占领3->6的1号座位
              * 那么
              * 1->4, 1->5, 1->6, 1->7, 1->8
              * 2->4, 2->5, 2->6, 2->7, 2->8
@@ -38,21 +42,24 @@ public class TicketingDS implements TicketingSystem {
              * 5->6, 5->7, 5->8
              * 以上这些区间的1号座位都要尝试去占领
              */
-            int i = 1;
-            Try: for (; i < arrival; i++) {
+            boolean flag = true;
+            Try: for (int i = 1; i < arrival; i++) {
                 for (int j = Math.max(departure, i) + 1; j <= route.stationNum; j++) {
                     State s = states[i][j];
                     ConcurrentHashMap<Integer, Boolean> map = s.availableSeats;
                     if (map.remove(seat) == null) {
                         //目标座位已经被其他线程从这个map中删除了
+                        flag = false;
                         //复原之前区间的状态
                         recovery(routeID, departure, arrival, seat, i, j);
                         break Try;  //换一个座位重新尝试
                     } else {
                         //占座成功
                         int prev = s.left.getAndDecrement();
-                        if (prev <= 0) {
-                            Singleton.INSTANCE.errorMsg(
+                        //有可能这里会出现prev为0的情况
+                        //因为可能有的线程将座位put到map里了, 但还没有把left++
+                        if (prev < 0) {
+                            Singleton.getInstance().errorMsg(
                                     "\n*******************************" +
                                     "\nseat less than 0: " +
                                     "\nrouteID: " + routeID +
@@ -62,8 +69,7 @@ public class TicketingDS implements TicketingSystem {
                     }
                 }
             }
-            if (i == arrival) {
-                //不是break退出的循环, 代表买票成功
+            if (flag) {
                 return ticketGenerator(passenger, routeID, departure, arrival, seat);
             }
         }
@@ -94,7 +100,7 @@ public class TicketingDS implements TicketingSystem {
                 Boolean flag = map.put(targetSeat, true);
                 if (flag != null) {
                     //不知道为啥被删除的座位会出现这个map里
-                    Singleton.INSTANCE.errorMsg(
+                    Singleton.getInstance().errorMsg(
                             "\n*******************************" +
                             "\nseat should not appear: " +
                             "\nrouteID: " + routeID +
@@ -103,8 +109,10 @@ public class TicketingDS implements TicketingSystem {
                             "\nstate: " + flag);
                 }
                 int prev = s.left.getAndIncrement();
-                if (prev >= route.total_seat) {
-                    Singleton.INSTANCE.errorMsg(
+                //prev有可能等于total seat
+                //因为可能有的线程将座位remove了, 但还没有把left--
+                if (prev > route.total_seat) {
+                    Singleton.getInstance().errorMsg(
                             "\n*******************************" +
                             "\nseat greater than seatNum: " +
                             "\nrouteID: " + routeID +
